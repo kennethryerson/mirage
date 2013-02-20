@@ -82,12 +82,17 @@ if gtk.pygtk_version < (2, 12, 0):
 	sys.stderr.write(_("Mirage requires PyGTK %s or newer.\n") % "2.12.0")
 	sys.exit(1)
 
+
+THUMBNAILS_DIR = os.path.expanduser('~/.thumbnails')
+
+
 def valid_int(inputstring):
 	try:
 		x = int(inputstring)
 		return True
 	except:
 		return False
+
 
 class Base:
 
@@ -792,32 +797,34 @@ class Base:
 		self.UIManager.insert_action_group(self.actionGroupCustom, 0)
 		self.UIManager.get_widget('/MainMenu/MiscKeysMenuHidden').set_property('visible', False)
 
-	def thumbpane_update_images(self, clear_first=False, force_upto_imgnum=-1):
+	def thumbpane_update_images(self, clear_first=False, force_upto_imgnum=-1, force_update=False):
 		self.stop_now = False
 		# When first populating the thumbpane, make sure we go up to at least
 		# force_upto_imgnum so that we can show this image selected:
 		if clear_first:
 			self.thumbpane_clear_list()
-		# Load all images up to the bottom ofo the visible thumbpane rect:
+		# Load all images up to the bottom of the visible thumbpane rect:
 		rect = self.thumbpane.get_visible_rect()
 		bottom_coord = rect.y + rect.height + self.usettings['thumbnail_size']
 		if bottom_coord > self.thumbpane_bottom_coord_loaded:
 			self.thumbpane_bottom_coord_loaded = bottom_coord
 		# update images:
 		if not self.thumbpane_updating:
-			thread = threading.Thread(target=self.thumbpane_update_pending_images, args=(force_upto_imgnum, None))
+			thread = threading.Thread(target=self.thumbpane_update_pending_images, args=(force_upto_imgnum, force_update))
 			thread.setDaemon(True)
 			thread.start()
 
 	def thumbpane_create_dir(self):
-		if not os.path.exists(os.path.expanduser('~/.thumbnails/')):
-			os.mkdir(os.path.expanduser('~/.thumbnails/'))
-		if not os.path.exists(os.path.expanduser('~/.thumbnails/normal/')):
-			os.mkdir(os.path.expanduser('~/.thumbnails/normal/'))
+		dir = os.path.join(THUMBNAILS_DIR, 'normal')
+		if not os.path.exists(dir):
+			os.makedirs(dir)
 
-	def thumbpane_update_pending_images(self, force_upto_imgnum, foo):
+	def thumbpane_update_pending_images(self, force_upto_imgnum, force_update):
 		self.thumbpane_updating = True
 		self.thumbpane_create_dir()
+		if force_update:
+			for i, image_path in enumerate(self.image_list):
+				self.thumbnail_remove(image_path, i)
 		# Check to see if any images need their thumbnails generated.
 		curr_coord = 0
 		imgnum = 0
@@ -826,8 +833,8 @@ class Base:
 				break
 			if imgnum >= len(self.image_list):
 				break
-			self.thumbpane_set_image(self.image_list[imgnum], imgnum)
-			curr_coord += self.thumbpane.get_background_area((imgnum,),self.thumbcolumn).height
+			self.thumbpane_set_image(self.image_list[imgnum], imgnum, force_update=force_update)
+			curr_coord += self.thumbpane.get_background_area((imgnum,), self.thumbcolumn).height
 			if force_upto_imgnum == imgnum:
 				# Verify that the user hasn't switched images while we're loading thumbnails:
 				if force_upto_imgnum == self.curr_img_in_list:
@@ -863,6 +870,16 @@ class Base:
 						pass
 					self.thumbscroll.get_vscrollbar().handler_unblock(self.thumb_scroll_handler)
 
+	def thumbnail_remove(self, image_name, imgnum):
+		filename, thumbfile = self.thumbnail_get_name(image_name)
+		assert THUMBNAILS_DIR in thumbfile
+		try:
+			os.remove(thumbfile)
+		except OSError as e:
+			# No biggie.
+			pass
+		self.thumbnail_loaded[imgnum] = False
+
 	def thumbnail_get_name(self, image_name):
 		filename = os.path.expanduser('file://' + image_name)
 		uriname = os.path.expanduser('file://' + urllib.pathname2url(image_name.encode('utf-8')))
@@ -872,7 +889,7 @@ class Base:
 			m = md5.new()
 		m.update(uriname)
 		mhex = m.hexdigest()
-		mhex_filename = os.path.expanduser('~/.thumbnails/normal/' + mhex + '.png')
+		mhex_filename = os.path.join(THUMBNAILS_DIR, 'normal', '%s.png' % mhex)
 		return filename, mhex_filename
 
 	def thumbpane_get_pixbuf(self, thumb_url, image_url, force_generation):
@@ -3120,7 +3137,7 @@ class Base:
 		img = self.image_list[self.curr_img_in_list]
 		self.image_list.remove(img)
 		self.image_list.insert(0, img)
-		self.expand_filelist_and_load_image(list(self.image_list))
+		self.expand_filelist_and_load_image(list(self.image_list), force_update=True)
 
 	def zoom_out(self, action):
 		if self.currimg.isloaded and self.UIManager.get_widget('/MainMenu/ViewMenu/Out').get_property('sensitive'):
@@ -4131,7 +4148,7 @@ class Base:
 				i.set_cursor(type)
 		self.layout.window.set_cursor(type)
 
-	def expand_filelist_and_load_image(self, inputlist):
+	def expand_filelist_and_load_image(self, inputlist, force_update=False):
 		# Takes the current list (i.e. ["pic.jpg", "pic2.gif", "../images"]) and
 		# expands it into a list of all pictures found
 		self.thumblist.clear()
@@ -4360,7 +4377,7 @@ class Base:
 		self.register_file_with_recent_docs(self.currimg.name)
 		self.set_go_navigation_sensitivities(False)
 		self.set_slideshow_sensitivities()
-		self.thumbpane_update_images(True, self.curr_img_in_list)
+		self.thumbpane_update_images(True, self.curr_img_in_list, force_update=force_update)
 		if not self.closing_app:
 			self.change_cursor(None)
 		self.recursive = False
