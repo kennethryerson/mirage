@@ -4164,6 +4164,7 @@ class Base:
 			if os.path.isdir(item):
 				self.searching_for_images = True
 				self.update_statusbar()
+				break
 		if not self.closing_app:
 			while gtk.events_pending():
 				gtk.main_iteration()
